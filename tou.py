@@ -63,7 +63,7 @@ class TouRate(object):
         endDay = pd.date_range(endDate, periods=1).dayofyear
         return(endDay[0] - startDay[0] < 0)
 
-    def filter_days(self, df, dropWknd=True, dropHol=True, inverse=False):
+    def filter_days(self, df, col=0, dropWknd=True, dropHol=True, inverse=False):
         """Returns dataframe without holidays or weekends or inverse.
 
         Arguments:
@@ -79,7 +79,8 @@ class TouRate(object):
         df_int = pd.DataFrame()
         if df_int.empty:
             if dropWknd & dropHol:
-                df_int = df.loc[~np.in1d(df.index.date, df.index[df.index.weekday > 4].date)]
+                df_int = df[df.columns[col]].loc[~np.in1d(df.index.date, df.index[df.index.weekday > 4].date)]
+                df_int = df_int.to_frame()
                 holExcp = self.cal.holidays(datetime(self.year, 1, 1), datetime(self.year, 12, 31), return_name=False)
                 df_int = df_int.loc[~np.in1d(df_int.index.date, holExcp.date)]
             elif dropWknd:
@@ -91,18 +92,18 @@ class TouRate(object):
                 df_int = df
 
         if inverse:
-            return(df.loc[~np.in1d(df.index.date, df_int.index.date)])
+            return(df[df.columns[col]].loc[~np.in1d(df.index.date, df_int.index.date)])
         else:
             return(df_int)
 
-    def get_period(self, df, key):
+    def get_period(self, df, key, col=0):
         """Returns dataframe with only hours and days from the give tou period.
 
         Arguments:
         df - dataframe of hourly energy production data
         key - dict key of TOU period defined in the
         """
-        daysFiltered = self.filter_days(df, **self.periods[key]['days'])
+        daysFiltered = self.filter_days(df, col=col, **self.periods[key]['days'])
         perStart = string_date(self.periods[key]['dates'][0], df.index[0].date().year)
         perEnd = string_date(self.periods[key]['dates'][1], df.index[0].date().year)
         if self.spans_year(key):
@@ -114,13 +115,21 @@ class TouRate(object):
             spring = fall.append(daysFiltered.ix[string_date('1/1', df.index[0].date().year):perEnd])
             spring = spring.between_time(self.periods[key]['times'][0], self.periods[key]['times'][1])
             spring = spring.sort_index()
-            return(spring.rename_axis({'data': key}, axis=1))
+            if isinstance(spring, pd.DataFrame):
+                return(spring.rename_axis({spring.columns[0]: key}, axis=1))
+            else:
+                spring = spring.to_frame()
+                return(spring.rename_axis({spring.columns[0]: key}, axis=1))
         else:
             df_temp = daysFiltered.ix[perStart:perEnd]
             df_temp = df_temp.between_time(self.periods[key]['times'][0], self.periods[key]['times'][1])
-            return(df_temp.rename_axis({'data': key}, axis=1))
+            if isinstance(df_temp, pd.DataFrame):
+                return(df_temp.rename_axis({df_temp.columns[0]: key}, axis=1))
+            else:
+                df_temp = df_temp.to_frame()
+                return(df_temp.rename_axis({df_temp.columns[0]: key}, axis=1))
 
-    def get_all_periods(self, df):
+    def get_all_periods(self, df, col=0):
         """Returns dataframe with a column for each tou period.
 
         Arguments:
@@ -128,7 +137,7 @@ class TouRate(object):
         """
         df_append = pd.DataFrame()
         for index, element in enumerate(self.periods):
-            df_temp = self.get_period(df, element)
+            df_temp = self.get_period(df, element, col)
             df_append = df_append.append(df_temp)
         return(df_append.sort_index())
 
@@ -139,13 +148,14 @@ class TouRate(object):
             rates[index] = self.periods[element]['price']
         return(pd.Series(rates, self.periods.keys()))
 
-    def get_summary(self, df):
+    def get_summary(self, df, col=0):
         """Returns datafame with summary TOU data of input dataframe.
 
         Arguments:
         df - dataframe of hourly energy production data
+        col - column of dataframe to slice, default 0
         """
-        results_df = pd.DataFrame({'Energy kWh': self.get_all_periods(df).sum()})
+        results_df = pd.DataFrame({'Energy kWh': self.get_all_periods(df, col).sum()})
         results_df['Prices $/kWh'] = self.deliveryPrice + self.get_rates()
         results_df['Value $'] = results_df['Energy kWh'] * results_df['Prices $/kWh']
         return(results_df)
